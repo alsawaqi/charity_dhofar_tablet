@@ -79,7 +79,7 @@ class _SetupNumberPageState extends State<SetupNumberPage> {
                 'Enter kiosk number and terminal id.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.75),
+                  color: Colors.white.withValues(alpha: 0.75),
                   fontSize: 14,
                 ),
               ),
@@ -130,10 +130,7 @@ class _SetupNumberPageState extends State<SetupNumberPage> {
                 Text(
                   _saveError!,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Colors.redAccent,
-                    fontSize: 13,
-                  ),
+                  style: const TextStyle(color: Colors.redAccent, fontSize: 13),
                 ),
               ],
               const SizedBox(height: 20),
@@ -155,11 +152,16 @@ class _SetupNumberPageState extends State<SetupNumberPage> {
                           var hasError = false;
                           if (kioskNumber.isEmpty) {
                             hasError = true;
-                            setState(() => _kioskError = 'Please enter kiosk number');
+                            setState(
+                              () => _kioskError = 'Please enter kiosk number',
+                            );
                           }
                           if (terminalId.isEmpty) {
                             hasError = true;
-                            setState(() => _terminalIdError = 'Please enter terminal id');
+                            setState(
+                              () =>
+                                  _terminalIdError = 'Please enter terminal id',
+                            );
                           }
                           if (hasError) return;
 

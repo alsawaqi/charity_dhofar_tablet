@@ -1,6 +1,5 @@
 package com.example.charity_dhofar_tablet
 
-import android.app.ProgressDialog
 import android.content.Intent
 import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
@@ -26,7 +25,6 @@ class MainActivity : FlutterActivity() {
 
     private var loginAndPayResult: MethodChannel.Result? = null
     private var paymentRequestData: Map<String, Any?>? = null
-    private var loadingDialog: ProgressDialog? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -254,26 +252,9 @@ class MainActivity : FlutterActivity() {
     private fun bytesToHexUpper(bytes: ByteArray): String =
         bytes.joinToString("") { "%02X".format(it) }
 
-    private fun showLoadingDialog(message: String) {
-        dismissLoadingDialog() // Dismiss any existing dialog first
-        loadingDialog = ProgressDialog(this).apply {
-            setMessage(message)
-            setCancelable(false)
-            setCanceledOnTouchOutside(false)
-            show()
-        }
-    }
+    private fun showLoadingDialog(@Suppress("UNUSED_PARAMETER") message: String) = Unit
 
-    private fun dismissLoadingDialog() {
-        loadingDialog?.dismiss()
-        loadingDialog = null
-    }
+    private fun dismissLoadingDialog() = Unit
 
-    private fun updateLoadingDialogMessage(message: String) {
-        if (loadingDialog?.isShowing == true) {
-            loadingDialog?.setMessage(message)
-        } else {
-            showLoadingDialog(message)
-        }
-    }
+    private fun updateLoadingDialogMessage(@Suppress("UNUSED_PARAMETER") message: String) = Unit
 }
