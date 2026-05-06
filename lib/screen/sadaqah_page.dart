@@ -15,6 +15,8 @@ import 'package:geolocator/geolocator.dart';
 import '../services/location_service.dart';
 
 const String donationSuccessVideoAsset = 'assets/videos/boy_thankyou.mp4';
+const bool donationSuccessVideoMuted = true;
+const Size donationSuccessVideoFallbackSize = Size(1200, 1920);
 
 bool shouldPlayDonationSuccessVideo(String? status) =>
     (status ?? '').trim().toUpperCase() == 'SUCCESS';
@@ -64,6 +66,9 @@ class _DonationSuccessVideoDialogState
   Future<void> _initializeAndPlay() async {
     try {
       await _controller.initialize();
+      if (donationSuccessVideoMuted) {
+        await _controller.setVolume(0);
+      }
       if (!mounted) return;
       setState(() => _initialized = true);
       await _controller.play();
@@ -133,8 +138,12 @@ class _FullScreenVideo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final videoSize = controller.value.size;
-    final width = videoSize.width > 0 ? videoSize.width : 720.0;
-    final height = videoSize.height > 0 ? videoSize.height : 1520.0;
+    final width = videoSize.width > 0
+        ? videoSize.width
+        : donationSuccessVideoFallbackSize.width;
+    final height = videoSize.height > 0
+        ? videoSize.height
+        : donationSuccessVideoFallbackSize.height;
 
     return ClipRect(
       child: FittedBox(
