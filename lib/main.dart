@@ -7,6 +7,10 @@ import 'screen/setup_number_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // 4GB kiosk hardware: cap the image cache well below the ~100MB default so the
+  // large tree background plus the success-video decode buffers don't build up
+  // memory pressure (and the GC churn / jank that comes with it).
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 32 << 20; // 32 MB
   runApp(const ProviderScope(child: CharityApp()));
 }
 
