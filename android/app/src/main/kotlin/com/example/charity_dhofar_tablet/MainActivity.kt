@@ -18,13 +18,16 @@ class MainActivity : FlutterActivity() {
     private val LOGIN_REQUEST_CODE = 1001
     private val PAYMENT_REQUEST_CODE = 1002
 
-    // Same key used in runner_src PasswordToken.java
-    // IMPORTANT: confirm this matches what Mosambee/bank provided for your environment.
+    // Same key used in runner_src PasswordToken.java.
+    // Confirm this matches what Mosambee/bank provided for your environment.
     private val PASSWORD_TOKEN_AES_KEY_HEX =
         "C9DDC0BB57179060D9F2E01BE71D65C71D222A063F4DDA858FDC467B173BD146"
 
-    private var loginAndPayResult: MethodChannel.Result? = null
-    private var paymentRequestData: Map<String, Any?>? = null
+    private var loginResult: MethodChannel.Result? = null
+    private var paymentResult: MethodChannel.Result? = null
+    private var loginContinuesToPayment = false
+    private var pendingPaymentArgs: Map<String, Any?>? = null
+    private var preparedSessionId: String? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -32,67 +35,9 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "loginAndPay" -> {
-                        val args = (call.arguments as? Map<*, *>) ?: run {
-                            result.error("BAD_ARGS", "Arguments must be a map", null)
-                            return@setMethodCallHandler
-                        }
-
-                        if (loginAndPayResult != null) {
-                            result.error("BUSY", "A transaction is already in progress", null)
-                            return@setMethodCallHandler
-                        }
-
-                        val pkg = args["packageName"]?.toString()?.trim().orEmpty()
-                        val userName = args["userName"]?.toString()?.trim().orEmpty()
-                        val partnerId = args["partnerId"]?.toString()?.trim().orEmpty()
-
-                        // Preferred: pass PIN from Dart and generate passwordToken here
-                        val pin = args["pin"]?.toString()
-                        // Backward compatible: if you still pass precomputed token as "password"
-                        val passwordFromDart = args["password"]?.toString()
-
-                        if (pkg.isEmpty() || userName.isEmpty()) {
-                            result.error("BAD_ARGS", "packageName and userName are required", null)
-                            return@setMethodCallHandler
-                        }
-
-                        val passwordToken = when {
-                            !pin.isNullOrBlank() -> generatePasswordToken(userName, pin)
-                            !passwordFromDart.isNullOrBlank() -> passwordFromDart
-                            else -> {
-                                result.error("BAD_ARGS", "Either pin or password(token) must be provided", null)
-                                return@setMethodCallHandler
-                            }
-                        }
-
-                        val loginIntent = Intent().apply {
-                            setPackage(pkg)
-                            action = "com.mosambee.softpos.login"
-                            putExtra("userName", userName)
-                            putExtra("password", passwordToken)
-                            if (partnerId.isNotEmpty()) putExtra("partnerId", partnerId)
-                        }
-
-                        loginAndPayResult = result
-                        paymentRequestData = args.entries.associate { (k, v) -> k.toString() to v }
-
-                        try {
-                            showLoadingDialog("Launching Mosambee Login...")
-                            startActivityForResult(loginIntent, LOGIN_REQUEST_CODE)
-                        } catch (e: Exception) {
-                            dismissLoadingDialog()
-                            val payload = JSONObject()
-                                .put("stage", "login")
-                                .put("status", "failed")
-                                .put("error", e.toString())
-                                .toString()
-                            loginAndPayResult?.success(payload)
-                            loginAndPayResult = null
-                            paymentRequestData = null
-                        }
-                    }
-
+                    "prepareLogin" -> handlePrepareLogin(call.arguments, result)
+                    "payWithPreparedSession" -> handlePayWithPreparedSession(call.arguments, result)
+                    "loginAndPay" -> handleLoginAndPay(call.arguments, result)
                     else -> result.notImplemented()
                 }
             }
@@ -107,40 +52,184 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun handleLoginResult(data: Intent?) {
-        val sessionId = data?.getStringExtra("sessionId")?.trim().orEmpty()
-
-        if (sessionId.isEmpty()) {
-            dismissLoadingDialog()
-            val payload = JSONObject()
-                .put("stage", "login")
-                .put("status", "failed")
-                .put("message", "Login failed or cancelled (no sessionId)")
-                .toString()
-
-            loginAndPayResult?.success(payload)
-            loginAndPayResult = null
-            paymentRequestData = null
+    private fun handlePrepareLogin(arguments: Any?, result: MethodChannel.Result) {
+        if (preparedSessionId?.isNotBlank() == true) {
+            result.success(
+                JSONObject()
+                    .put("stage", "login")
+                    .put("status", "success")
+                    .put("sessionReady", true)
+                    .put("message", "Mosambee session already prepared")
+                    .toString()
+            )
             return
         }
 
-        val args = paymentRequestData ?: run {
-            dismissLoadingDialog()
-            val payload = JSONObject()
-                .put("stage", "login")
-                .put("status", "failed")
-                .put("message", "Missing pending payment args")
-                .toString()
-            loginAndPayResult?.success(payload)
-            loginAndPayResult = null
-            paymentRequestData = null
+        startLogin(arguments, result, continuesToPayment = false)
+    }
+
+    private fun handleLoginAndPay(arguments: Any?, result: MethodChannel.Result) {
+        startLogin(arguments, result, continuesToPayment = true)
+    }
+
+    private fun handlePayWithPreparedSession(arguments: Any?, result: MethodChannel.Result) {
+        val args = parseArgs(arguments, result) ?: return
+
+        if (paymentResult != null || loginResult != null) {
+            result.error("BUSY", "A Mosambee operation is already in progress", null)
+            return
+        }
+
+        val sessionId = preparedSessionId?.trim().orEmpty()
+        if (sessionId.isEmpty()) {
+            result.success(
+                JSONObject()
+                    .put("stage", "payment")
+                    .put("status", "failed")
+                    .put("code", "NO_SESSION")
+                    .put("message", "No prepared Mosambee login session")
+                    .toString()
+            )
+            return
+        }
+
+        preparedSessionId = null
+        startPayment(sessionId, args, result)
+    }
+
+    private fun startLogin(
+        arguments: Any?,
+        result: MethodChannel.Result,
+        continuesToPayment: Boolean
+    ) {
+        val args = parseArgs(arguments, result) ?: return
+
+        if (paymentResult != null || loginResult != null) {
+            result.error("BUSY", "A Mosambee operation is already in progress", null)
             return
         }
 
         val pkg = args["packageName"]?.toString()?.trim().orEmpty()
+        val userName = args["userName"]?.toString()?.trim().orEmpty()
+        val partnerId = args["partnerId"]?.toString()?.trim().orEmpty()
+        val pin = args["pin"]?.toString()
+        val passwordFromDart = args["password"]?.toString()
+
+        if (pkg.isEmpty() || userName.isEmpty()) {
+            result.error("BAD_ARGS", "packageName and userName are required", null)
+            return
+        }
+
+        val passwordToken = when {
+            !pin.isNullOrBlank() -> generatePasswordToken(userName, pin)
+            !passwordFromDart.isNullOrBlank() -> passwordFromDart
+            else -> {
+                result.error("BAD_ARGS", "Either pin or password(token) must be provided", null)
+                return
+            }
+        }
+
+        val loginIntent = Intent().apply {
+            setPackage(pkg)
+            action = "com.mosambee.softpos.login"
+            putExtra("userName", userName)
+            putExtra("password", passwordToken)
+            if (partnerId.isNotEmpty()) putExtra("partnerId", partnerId)
+        }
+
+        loginResult = result
+        loginContinuesToPayment = continuesToPayment
+        pendingPaymentArgs = if (continuesToPayment) args else null
+
+        try {
+            showLoadingDialog("Launching Mosambee Login...")
+            startActivityForResult(loginIntent, LOGIN_REQUEST_CODE)
+        } catch (e: Exception) {
+            dismissLoadingDialog()
+            loginResult?.success(
+                JSONObject()
+                    .put("stage", "login")
+                    .put("status", "failed")
+                    .put("sessionReady", false)
+                    .put("error", e.toString())
+                    .toString()
+            )
+            clearLoginState()
+        }
+    }
+
+    private fun handleLoginResult(data: Intent?) {
+        dismissLoadingDialog()
+
+        val activeResult = loginResult ?: return
+        val sessionId = data?.getStringExtra("sessionId")?.trim().orEmpty()
+        val responseCode = data?.getStringExtra("responseCode")?.trim().orEmpty()
+        val description = data?.getStringExtra("description")?.trim().orEmpty()
+
+        if (sessionId.isEmpty()) {
+            activeResult.success(
+                JSONObject()
+                    .put("stage", "login")
+                    .put("status", "failed")
+                    .put("sessionReady", false)
+                    .put("responseCode", responseCode)
+                    .put("description", description)
+                    .put("message", "Login failed or cancelled (no sessionId)")
+                    .toString()
+            )
+            clearLoginState()
+            return
+        }
+
+        if (!loginContinuesToPayment) {
+            preparedSessionId = sessionId
+            activeResult.success(
+                JSONObject()
+                    .put("stage", "login")
+                    .put("status", "success")
+                    .put("sessionReady", true)
+                    .put("responseCode", responseCode)
+                    .put("description", description)
+                    .toString()
+            )
+            clearLoginState()
+            return
+        }
+
+        val args = pendingPaymentArgs
+        if (args == null) {
+            activeResult.success(
+                JSONObject()
+                    .put("stage", "login")
+                    .put("status", "failed")
+                    .put("sessionReady", false)
+                    .put("message", "Missing pending payment args")
+                    .toString()
+            )
+            clearLoginState()
+            return
+        }
+
+        paymentResult = activeResult
+        clearLoginState()
+        startPayment(sessionId, args, activeResult)
+    }
+
+    private fun startPayment(
+        sessionId: String,
+        args: Map<String, Any?>,
+        result: MethodChannel.Result
+    ) {
+        val pkg = args["packageName"]?.toString()?.trim().orEmpty()
         val amount = args["amount"]?.toString()?.trim().orEmpty()
         val mobNo = args["mobNo"]?.toString().orEmpty()
         val description = args["description"]?.toString().orEmpty()
+
+        if (pkg.isEmpty() || amount.isEmpty()) {
+            result.error("BAD_ARGS", "packageName and amount are required", null)
+            clearPaymentState()
+            return
+        }
 
         val paymentIntent = Intent().apply {
             setPackage(pkg)
@@ -151,69 +240,95 @@ class MainActivity : FlutterActivity() {
             if (description.isNotEmpty()) putExtra("description", description)
         }
 
+        paymentResult = result
+
         try {
-            updateLoadingDialogMessage("Starting Payment...")
+            showLoadingDialog("Starting Payment...")
             startActivityForResult(paymentIntent, PAYMENT_REQUEST_CODE)
         } catch (e: Exception) {
             dismissLoadingDialog()
-            val payload = JSONObject()
-                .put("stage", "payment")
-                .put("status", "failed")
-                .put("error", e.toString())
-                .toString()
-
-            loginAndPayResult?.success(payload)
-            loginAndPayResult = null
-            paymentRequestData = null
+            paymentResult?.success(
+                JSONObject()
+                    .put("stage", "payment")
+                    .put("status", "failed")
+                    .put("error", e.toString())
+                    .toString()
+            )
+            clearPaymentState()
         }
     }
 
     private fun handlePaymentResult(resultCode: Int, data: Intent?) {
         dismissLoadingDialog()
 
+        val activeResult = paymentResult ?: return
         val receiptStr = data?.getStringExtra("receiptResponse") ?: "{}"
-        val paymentResponseCode = data?.getStringExtra("paymentResponseCode") ?: ""
+        val responseCode = data?.getStringExtra("responseCode")?.trim().orEmpty()
+        val paymentResponseCode = data?.getStringExtra("paymentResponseCode")?.trim().orEmpty()
         val paymentDescription = data?.getStringExtra("paymentDescription") ?: ""
-    
+
         val receiptJson = try {
             JSONObject(receiptStr)
         } catch (e: Exception) {
             JSONObject().put("raw", receiptStr)
         }
-    
-        // ✅ fallback to receiptResponse.responseCode if paymentResponseCode is missing
-        val code = paymentResponseCode.trim().ifEmpty { receiptJson.optString("responseCode", "") }.trim()
-        val isSuccess = (code == "0" || code == "00" || receiptJson.optString("result") == "success")
-    
+
+        val receiptResponseCode = receiptJson.optString("responseCode", "").trim()
+        val code = paymentResponseCode.ifEmpty { receiptResponseCode }
+        val isSuccess = when {
+            paymentResponseCode.isNotEmpty() -> paymentResponseCode == "0" || paymentResponseCode == "00"
+            receiptResponseCode.isNotEmpty() && !receiptResponseCode.equals("NA", ignoreCase = true) ->
+                receiptResponseCode == "0" || receiptResponseCode == "00"
+            else -> receiptJson.optString("result", "").equals("success", ignoreCase = true)
+        }
+
         val payload = JSONObject()
             .put("stage", "payment")
             .put("status", if (isSuccess) "success" else "failed")
+            .put("responseCode", responseCode)
             .put("paymentResponseCode", code)
             .put("paymentDescription", paymentDescription)
-            .put("receiptResponse", receiptJson)   // ✅ object, not escaped string
+            .put("receiptResponse", receiptJson)
             .put("resultCode", resultCode)
             .toString()
-    
+
         Log.d("MosambeeDebug", "Payment payload: $payload")
-        loginAndPayResult?.success(payload)
-        loginAndPayResult = null
-        paymentRequestData = null
+        activeResult.success(payload)
+        clearPaymentState()
     }
-    
+
+    private fun parseArgs(arguments: Any?, result: MethodChannel.Result): Map<String, Any?>? {
+        val args = arguments as? Map<*, *> ?: run {
+            result.error("BAD_ARGS", "Arguments must be a map", null)
+            return null
+        }
+
+        return args.entries.associate { (key, value) -> key.toString() to value }
+    }
+
+    private fun clearLoginState() {
+        loginResult = null
+        loginContinuesToPayment = false
+        pendingPaymentArgs = null
+    }
+
+    private fun clearPaymentState() {
+        paymentResult = null
+    }
 
     // ---------------- runner_src PasswordToken logic ----------------
 
     private fun generatePasswordToken(userName: String, pin: String): String {
-        val c1 = sha256Hex(pin)       // lowercase hex
-        val c2 = sha256Hex(userName)  // lowercase hex
-        val passToken = xorHex(c1, c2) // uppercase hex
+        val c1 = sha256Hex(pin)
+        val c2 = sha256Hex(userName)
+        val passToken = xorHex(c1, c2)
         return aesEncryptAppendIvHex(PASSWORD_TOKEN_AES_KEY_HEX, passToken)
     }
 
     private fun sha256Hex(input: String): String {
         val md = MessageDigest.getInstance("SHA-256")
         val hash = md.digest(input.toByteArray(Charsets.UTF_8))
-        return hash.joinToString("") { "%02x".format(it) } // lowercase
+        return hash.joinToString("") { "%02x".format(it) }
     }
 
     private fun xorHex(hex1: String, hex2: String): String {
@@ -221,7 +336,7 @@ class MainActivity : FlutterActivity() {
         val b2 = hexToBytes(hex2)
         val out = ByteArray(b1.size)
         for (i in b1.indices) out[i] = (b1[i].toInt() xor b2[i].toInt()).toByte()
-        return bytesToHexUpper(out) // uppercase
+        return bytesToHexUpper(out)
     }
 
     private fun aesEncryptAppendIvHex(keyHex: String, value: String): String {
@@ -235,7 +350,7 @@ class MainActivity : FlutterActivity() {
         cipher.init(Cipher.ENCRYPT_MODE, skeySpec, IvParameterSpec(iv))
 
         val encrypted = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
-        return bytesToHexUpper(encrypted) + bytesToHexUpper(iv) // encryptedHex + ivHex
+        return bytesToHexUpper(encrypted) + bytesToHexUpper(iv)
     }
 
     private fun hexToBytes(hex: String): ByteArray {
@@ -255,6 +370,4 @@ class MainActivity : FlutterActivity() {
     private fun showLoadingDialog(@Suppress("UNUSED_PARAMETER") message: String) = Unit
 
     private fun dismissLoadingDialog() = Unit
-
-    private fun updateLoadingDialogMessage(@Suppress("UNUSED_PARAMETER") message: String) = Unit
 }
