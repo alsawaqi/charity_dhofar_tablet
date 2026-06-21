@@ -1681,7 +1681,7 @@ class _SadaqahPageState extends ConsumerState<SadaqahPage>
     final paymentControlsEnabled = _paymentControlsEnabled;
     final mq = MediaQuery.of(context);
     final topInset = mq.padding.top;
-    final double cardWidth = (mq.size.width * 0.21).clamp(74.0, 104.0);
+    final double cardWidth = (mq.size.width * 0.21).clamp(74.0, 116.0);
 
     return TickerMode(
       enabled: _animationsEnabled,
@@ -4302,7 +4302,7 @@ class _StatCard extends StatelessWidget {
               textDirection: textDirection,
               style: const TextStyle(
                 color: Colors.white70,
-                fontSize: 20,
+                fontSize: 28,
                 fontWeight: FontWeight.w600,
               ),
             ),
