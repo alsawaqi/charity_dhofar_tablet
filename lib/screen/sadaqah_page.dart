@@ -1742,7 +1742,7 @@ class _SadaqahPageState extends ConsumerState<SadaqahPage>
             // Floating stat cards in the top corners.
             Positioned(
               top: topInset + 8,
-              left: 10,
+              left: 30,
               child: RepaintBoundary(
                 child: _StatCard(
                   width: cardWidth,
@@ -1865,16 +1865,19 @@ class _SadaqahPageState extends ConsumerState<SadaqahPage>
         // Gap between the dial and each quick orb. Larger on the tablet so the
         // "5" orb sits higher and the "0.100" orb sits lower (more separation);
         // it's also subtracted from dialMaxH below, so the dial can't overflow.
-        const double clusterGap = 60.0;
+        const double clusterGap = 30.0;
         // Dial fits BOTH the width (centered between the side lanes) AND the
         // height: 2 quick circles + dial + gaps must not overflow the screen.
         final double dialMaxW = w - 2 * sliderZone - 8;
-        // quickD ≈ 0.814*dialD (10% larger), so cluster height ≈ 2.628*dialD + 2*gap.
-        final double dialMaxH = (h - 2 * clusterGap - 12) / 2.628;
+        // quickD ≈ 0.733*dialD (0.814 * 0.9), so cluster height ≈ 2.466*dialD + 2*gap.
+        final double dialMaxH = (h - 2 * clusterGap - 12) / 2.466;
         // Tablet (1200x1920 / 800x1280 logical) has more vertical room than the
         // phone kiosk, so allow a larger cluster to fill it. dialMaxH still binds
         // via the min() above, so this only grows when the height actually allows.
-        final double dialD = math.min(dialMaxW, dialMaxH).clamp(140.0, 290.0);
+        final double dialD = math.min(dialMaxW, dialMaxH).clamp(140.0, 330.0);
+        // The central dial renders a touch smaller than its layout size (per
+        // request); the quick orbs below keep their full dialD-derived size.
+        final double dialDisplayD = dialD * 0.9;
         // Quick orbs (5 / 0.100): 10% smaller than the dial-derived size so they
         // read as secondary and leave more breathing room around the dial.
         final double quickD = (dialD * 0.814 * 0.9).clamp(96.0, 216.0);
@@ -1907,7 +1910,7 @@ class _SadaqahPageState extends ConsumerState<SadaqahPage>
                         child: ValueListenableBuilder<int>(
                           valueListenable: _stepIndexVN,
                           builder: (context, _, _) => _DialWithSparkles(
-                            diameter: dialD,
+                            diameter: dialDisplayD,
                             valueText: _amountLabel,
                             subtitle: _dialSubtitle,
                             dragging: _dragging,
@@ -1985,7 +1988,7 @@ class _SadaqahPageState extends ConsumerState<SadaqahPage>
             // top). The lane is wide enough for the "Our goal" header label
             // above it (the capsule itself stays thin, centered in the lane).
             Positioned(
-              left: 8,
+              left: 30,
               top: 45 + h * 0.05,
               bottom: 35,
               width: sliderZone, // mirror the right lane — room for a big ring
@@ -3438,8 +3441,8 @@ class _DialSparklePainter extends CustomPainter {
     // Many more sparkles WHILE sliding/dragging (transient — doesn't touch the
     // idle cost); a calm count at rest. Trimmed on the low-RAM kiosk.
     final int count = active
-        ? (kLowEndDevice ? 40 : 64)
-        : (kLowEndDevice ? 12 : 20);
+        ? (kLowEndDevice ? 80 : 120)
+        : (kLowEndDevice ? 14 : 24);
 
     final Paint dot = Paint()..style = PaintingStyle.fill;
 
