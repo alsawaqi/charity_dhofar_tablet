@@ -234,13 +234,20 @@ class _FullScreenVideo extends StatelessWidget {
         ? videoSize.height
         : donationSuccessVideoFallbackSize.height;
 
-    return ClipRect(
-      child: FittedBox(
-        fit: BoxFit.cover,
-        child: SizedBox(
-          width: width,
-          height: height,
-          child: VideoPlayer(controller),
+    // SizedBox.expand re-imposes TIGHT screen-sized constraints. The parent
+    // AnimatedSwitcher hands down LOOSE constraints (its internal Stack), under
+    // which FittedBox(cover) degrades to contain and leaves black side bars.
+    // With tight constraints, cover fills the full 1200x1920 — the 464x832 clip
+    // scales to the width and only a little is cropped off the top/bottom.
+    return SizedBox.expand(
+      child: ClipRect(
+        child: FittedBox(
+          fit: BoxFit.cover,
+          child: SizedBox(
+            width: width,
+            height: height,
+            child: VideoPlayer(controller),
+          ),
         ),
       ),
     );
@@ -1855,8 +1862,10 @@ class _SadaqahPageState extends ConsumerState<SadaqahPage>
         final double h = constraints.maxHeight;
         // Space reserved on the right edge for the slider track + tick labels.
         final double sliderZone = (w * 0.27).clamp(98.0, 150.0);
-        // Gap so the quick circles never touch the dial.
-        const double clusterGap = 16.0;
+        // Gap between the dial and each quick orb. Larger on the tablet so the
+        // "5" orb sits higher and the "0.100" orb sits lower (more separation);
+        // it's also subtracted from dialMaxH below, so the dial can't overflow.
+        const double clusterGap = 60.0;
         // Dial fits BOTH the width (centered between the side lanes) AND the
         // height: 2 quick circles + dial + gaps must not overflow the screen.
         final double dialMaxW = w - 2 * sliderZone - 8;
@@ -1866,7 +1875,9 @@ class _SadaqahPageState extends ConsumerState<SadaqahPage>
         // phone kiosk, so allow a larger cluster to fill it. dialMaxH still binds
         // via the min() above, so this only grows when the height actually allows.
         final double dialD = math.min(dialMaxW, dialMaxH).clamp(140.0, 290.0);
-        final double quickD = (dialD * 0.814).clamp(106.0, 240.0);
+        // Quick orbs (5 / 0.100): 10% smaller than the dial-derived size so they
+        // read as secondary and leave more breathing room around the dial.
+        final double quickD = (dialD * 0.814 * 0.9).clamp(96.0, 216.0);
 
         return Stack(
           children: [
@@ -1944,7 +1955,7 @@ class _SadaqahPageState extends ConsumerState<SadaqahPage>
             // Right side: vertical amount slider with tick labels.
             // ~15% shorter than full height (shortened from the top).
             Positioned(
-              right: 0,
+              right: 20,
               top: 12 + h * 0.07,
               bottom: 16,
               width: sliderZone,
@@ -3493,7 +3504,7 @@ class _FireflyPainter extends CustomPainter {
   final math.Random _rng = math.Random(23);
 
   // Kept light for smooth animation; trimmed further on the low-RAM kiosk.
-  static const int _count = kLowEndDevice ? 8 : 12;
+  static const int _count = kLowEndDevice ? 20 : 28;
   static const Color _core = Color(0xFFFFF3B0); // warm yellow
   static const Color _glow = Color(0xFFFFD451); // gold
 
@@ -4288,7 +4299,7 @@ class _StatCard extends StatelessWidget {
               textDirection: textDirection,
               style: const TextStyle(
                 color: Colors.white70,
-                fontSize: 12,
+                fontSize: 20,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -4317,7 +4328,7 @@ class _StatCard extends StatelessWidget {
               textDirection: textDirection,
               style: const TextStyle(
                 color: Colors.white60,
-                fontSize: 12.1, // 10% larger than the previous 11
+                fontSize: 16,
                 fontWeight: FontWeight.w500,
               ),
             ),
